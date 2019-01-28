@@ -11,6 +11,7 @@
   "author": "Danu Kumanan",
   "license": "MIT",
   "dependencies": {
+	"@babel/runtime": "^7.3.1",
     "chalk": "latest",
     "js-scrypt": "^0.2.0",
     "json-bigint": "^0.3.0",
