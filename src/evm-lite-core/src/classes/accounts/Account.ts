@@ -1,6 +1,15 @@
 // @ts-ignore
 import * as ethlib from 'eth-lib';
-import * as Utils from 'web3-utils';
+// @ts-ignore
+import * as randomBytes from 'randombytes';
+// @ts-ignore
+import * as uuid from 'uuid';
+
+const scryptsy = require('scryptsy');
+const keccak256 = require('keccak256');
+
+// @ts-ignore
+import { createCipheriv } from 'browserify-cipher';
 
 import Formatters from '../../utils/Formatters';
 
@@ -54,26 +63,26 @@ export interface Web3Account {
 }
 
 export default class Account {
-	get address(): EVM.Address {
-		return this.account.address;
-	}
-
-	get privateKey(): string {
-		return this.account.privateKey;
-	}
+	public readonly address: EVM.Address;
+	public readonly privateKey: string;
 
 	public balance: number = 0;
 	public nonce: number = 0;
 
-	private readonly account: Web3Account;
-
-	constructor(data: Web3Account) {
-		this.account = data;
+	constructor({
+		address,
+		privateKey
+	}: {
+		address: string;
+		privateKey: string;
+	}) {
+		this.address = address;
+		this.privateKey = privateKey;
 	}
 
-	public sign(message: string): any {
-		return this.account.sign(message);
-	}
+	// public sign(message: string): any {
+	// 	return this.account.sign(message);
+	// }
 
 	public signTransaction1(tx: TX): Promise<SignedTransaction> {
 		tx.nonce = tx.nonce || this.nonce;
@@ -161,8 +170,10 @@ export default class Account {
 	}
 
 	public encrypt(password: string): V3JSONKeyStore {
-		// @ts-ignore
-		return this.account.encrypt(password);
+		return new Account({
+			privateKey: this.privateKey,
+			address: this.address
+		}).toV3Keystore(password);
 	}
 
 	public toBaseAccount(): BaseAccount {
@@ -170,6 +181,76 @@ export default class Account {
 			address: this.address,
 			balance: this.balance,
 			nonce: this.nonce
+		};
+	}
+
+	private toV3Keystore(password: string, options: any = {}) {
+		options = options || {};
+		const salt = options.salt || randomBytes(32);
+		const iv = options.iv || randomBytes(16);
+
+		let derivedKey;
+		const kdf = options.kdf || 'scrypt';
+		const kdfparams: any = {
+			dklen: options.dklen || 32,
+			salt: salt.toString('hex')
+		};
+
+		if (kdf === 'scrypt') {
+			// FIXME: support progress reporting callback
+			kdfparams.n = options.n || 8192; // 2048 4096 8192 16384
+			kdfparams.r = options.r || 8;
+			kdfparams.p = options.p || 1;
+			derivedKey = scryptsy(
+				Buffer.from(password),
+				salt,
+				kdfparams.n,
+				kdfparams.r,
+				kdfparams.p,
+				kdfparams.dklen
+			);
+		} else {
+			throw new Error('Unsupported kdf');
+		}
+
+		const cipher = createCipheriv(
+			options.cipher || 'aes-128-ctr',
+			derivedKey.slice(0, 16),
+			iv
+		);
+		if (!cipher) {
+			throw new Error('Unsupported cipher');
+		}
+
+		const ciphertext = Buffer.concat([
+			cipher.update(
+				Buffer.from(this.privateKey.replace('0x', ''), 'hex')
+			),
+			cipher.final()
+		]);
+
+		const mac = keccak256(
+			Buffer.concat([
+				derivedKey.slice(16, 32),
+				// @ts-ignore
+				Buffer.from(ciphertext, 'hex')
+			])
+		);
+
+		return {
+			version: 3,
+			id: uuid.v4({ random: options.uuid || randomBytes(16) }),
+			address: this.address.toLowerCase().replace('0x', ''),
+			crypto: {
+				ciphertext: ciphertext.toString('hex'),
+				cipherparams: {
+					iv: iv.toString('hex')
+				},
+				cipher: options.cipher || 'aes-128-ctr',
+				kdf,
+				kdfparams,
+				mac: mac.toString('hex')
+			}
 		};
 	}
 }

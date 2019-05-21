@@ -1,18 +1,22 @@
-import { Accounts as Web3Accounts } from 'web3-eth-accounts';
+// @ts-ignore
+import * as EthLibAccount from 'eth-lib/lib/account';
+
+// TODO: Create typings for these modules
+const scryptsy = require('scryptsy');
+const keccak256 = require('keccak256');
+
+// @ts-ignore
+import { createDecipheriv } from 'browserify-cipher';
 
 import { V3JSONKeyStore } from './Account';
-
 import { Defaults } from '../EVMLC';
 
-import Transaction, { BaseTransaction } from '../transaction/Transaction';
-
+import Transaction from '../transaction/Transaction';
 import AccountClient from '../../clients/AccountClient';
 import EVM from '../../types';
 import Account from './Account';
 
 export default class Accounts extends AccountClient {
-	private accounts: Web3Accounts;
-
 	/**
 	 * The root cotnroller class for interacting with accounts.
 	 *
@@ -22,12 +26,6 @@ export default class Accounts extends AccountClient {
 	 */
 	constructor(host: string, port: number, public defaults: Defaults) {
 		super(host, port);
-
-		this.accounts = new Web3Accounts('http://', {
-			defaultAccount: '0X0000000000000000000000000000000000000000',
-			defaultGas: 0,
-			defaultGasPrice: ''
-		});
 	}
 
 	/**
@@ -46,10 +44,7 @@ export default class Accounts extends AccountClient {
 	 * @param password - The password used to encrypt to the keystore.
 	 */
 	public decrypt(v3JSONKeyStore: V3JSONKeyStore, password: string) {
-		const account = this.accounts.decrypt(v3JSONKeyStore, password);
-
-		// @ts-ignore
-		return new Account(account);
+		return Accounts.decryptAccount(v3JSONKeyStore, password);
 	}
 
 	/**
@@ -65,8 +60,7 @@ export default class Accounts extends AccountClient {
 	public create(entropy?: string): Account {
 		const randomHex = require('crypto-random-hex');
 
-		// @ts-ignore
-		return new Account(this.accounts.create(entropy || randomHex(32)));
+		return new Account(EthLibAccount.create(entropy || randomHex(32)));
 	}
 
 	/**
@@ -123,5 +117,58 @@ export default class Accounts extends AccountClient {
 			this.port,
 			false
 		);
+	}
+
+	private static fromPrivateKey(privateKey: string) {
+		return new Account(EthLibAccount.fromPrivate(privateKey));
+	}
+
+	private static decryptAccount(json: V3JSONKeyStore, password: string) {
+		if (!password) {
+			throw new Error('No password given.');
+		}
+
+		if (json.version !== 3) {
+			throw new Error('Not a valid V3 wallet');
+		}
+
+		let derivedKey;
+		let kdfparams;
+		if (json.crypto.kdf === 'scrypt') {
+			kdfparams = json.crypto.kdfparams;
+
+			derivedKey = scryptsy(
+				Buffer.from(password),
+				Buffer.from(kdfparams.salt, 'hex'),
+				kdfparams.n,
+				kdfparams.r,
+				kdfparams.p,
+				kdfparams.dklen
+			);
+		} else {
+			throw new Error('Unsupported key derivation scheme');
+		}
+
+		const ciphertext = Buffer.from(json.crypto.ciphertext, 'hex');
+
+		const mac = keccak256(
+			Buffer.concat([derivedKey.slice(16, 32), ciphertext])
+		).toString('hex');
+
+		if (mac !== json.crypto.mac) {
+			throw new Error('Key derivation failed - possibly wrong password');
+		}
+
+		const decipher = createDecipheriv(
+			json.crypto.cipher,
+			derivedKey.slice(0, 16),
+			Buffer.from(json.crypto.cipherparams.iv, 'hex')
+		);
+		const seed = `0x${Buffer.concat([
+			decipher.update(ciphertext),
+			decipher.final()
+		]).toString('hex')}`;
+
+		return Accounts.fromPrivateKey(seed);
 	}
 }

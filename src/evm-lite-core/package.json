@@ -12,17 +12,20 @@
 		"doc": "typedoc --out docs --mode file --target ES6 --exclude node_modules ./src"
 	},
 	"dependencies": {
-		"@babel/runtime": "^7.3.1",
+		"browserify-cipher": "^1.0.1",
 		"crypto-random-hex": "^1.0.0",
 		"eth-lib": "^0.2.8",
-		"js-scrypt": "^0.2.0",
 		"json-bigint": "0.3.0",
+		"keccak256": "^1.0.0",
+		"randombytes": "^2.1.0",
+		"scryptsy": "^2.0.0",
+		"uuid": "^3.3.2",
 		"web3": "0.20.6",
-		"web3-eth-accounts": "1.0.0-beta.46",
 		"web3-eth-iban": "^1.0.0-beta.46",
 		"web3-utils": "^1.0.0-beta.46"
 	},
 	"devDependencies": {
+		"@babel/runtime": "^7.3.1",
 		"@types/chai": "^4.1.7",
 		"@types/jest": "^24.0.0",
 		"@types/mocha": "^5.2.5",
