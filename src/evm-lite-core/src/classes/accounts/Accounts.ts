@@ -8,15 +8,68 @@ const keccak256 = require('keccak256');
 // @ts-ignore
 import { createDecipheriv } from 'browserify-cipher';
 
-import { V3JSONKeyStore } from './Account';
 import { Defaults } from '../EVMLC';
+import { V3JSONKeyStore } from './Account';
 
-import Transaction from '../transaction/Transaction';
 import AccountClient from '../../clients/AccountClient';
 import EVM from '../../types';
+import Transaction from '../transaction/Transaction';
 import Account from './Account';
 
 export default class Accounts extends AccountClient {
+	private static fromPrivateKey(privateKey: string) {
+		return new Account(EthLibAccount.fromPrivate(privateKey));
+	}
+
+	private static decryptAccount(json: V3JSONKeyStore, password: string) {
+		if (!password) {
+			throw new Error('No password given.');
+		}
+
+		if (json.version !== 3) {
+			throw new Error('Not a valid V3 wallet');
+		}
+
+		let derivedKey;
+		let kdfparams;
+		if (json.crypto.kdf === 'scrypt') {
+			kdfparams = json.crypto.kdfparams;
+
+			derivedKey = scryptsy(
+				Buffer.from(password),
+				Buffer.from(kdfparams.salt, 'hex'),
+				kdfparams.n,
+				kdfparams.r,
+				kdfparams.p,
+				kdfparams.dklen
+			);
+		} else {
+			throw new Error('Unsupported key derivation scheme');
+		}
+
+		const ciphertext = Buffer.from(json.crypto.ciphertext, 'hex');
+
+		const mac = keccak256(
+			Buffer.concat([derivedKey.slice(16, 32), ciphertext])
+		).toString('hex');
+
+		if (mac !== json.crypto.mac) {
+			throw new Error('Key derivation failed - possibly wrong password');
+		}
+
+		const decipher = createDecipheriv(
+			json.crypto.cipher,
+			derivedKey.slice(0, 16),
+			Buffer.from(json.crypto.cipherparams.iv, 'hex')
+		);
+		const seed = `0x${Buffer.concat([
+			decipher.update(ciphertext),
+			decipher.final()
+		]).toString('hex')}`;
+
+		return Accounts.fromPrivateKey(seed);
+	}
+
 	/**
 	 * The root cotnroller class for interacting with accounts.
 	 *
@@ -117,58 +170,5 @@ export default class Accounts extends AccountClient {
 			this.port,
 			false
 		);
-	}
-
-	private static fromPrivateKey(privateKey: string) {
-		return new Account(EthLibAccount.fromPrivate(privateKey));
-	}
-
-	private static decryptAccount(json: V3JSONKeyStore, password: string) {
-		if (!password) {
-			throw new Error('No password given.');
-		}
-
-		if (json.version !== 3) {
-			throw new Error('Not a valid V3 wallet');
-		}
-
-		let derivedKey;
-		let kdfparams;
-		if (json.crypto.kdf === 'scrypt') {
-			kdfparams = json.crypto.kdfparams;
-
-			derivedKey = scryptsy(
-				Buffer.from(password),
-				Buffer.from(kdfparams.salt, 'hex'),
-				kdfparams.n,
-				kdfparams.r,
-				kdfparams.p,
-				kdfparams.dklen
-			);
-		} else {
-			throw new Error('Unsupported key derivation scheme');
-		}
-
-		const ciphertext = Buffer.from(json.crypto.ciphertext, 'hex');
-
-		const mac = keccak256(
-			Buffer.concat([derivedKey.slice(16, 32), ciphertext])
-		).toString('hex');
-
-		if (mac !== json.crypto.mac) {
-			throw new Error('Key derivation failed - possibly wrong password');
-		}
-
-		const decipher = createDecipheriv(
-			json.crypto.cipher,
-			derivedKey.slice(0, 16),
-			Buffer.from(json.crypto.cipherparams.iv, 'hex')
-		);
-		const seed = `0x${Buffer.concat([
-			decipher.update(ciphertext),
-			decipher.final()
-		]).toString('hex')}`;
-
-		return Accounts.fromPrivateKey(seed);
 	}
 }
